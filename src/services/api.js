@@ -9,7 +9,24 @@ export const api = axios.create({
     },
 });
 
-export const login = (username, password) => api.post("/admin/login", { username, password });
+export const login = async (username, password) => {
+    const response = await fetch("http://localhost:8080/api/admin/login", {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json"
+        },
+        credentials: "include",  // ✅ Добавляем, если сервер требует авторизацию
+        body: JSON.stringify({ username, password })
+    });
+    debugger
+
+    if (!response.ok) {
+        throw new Error("Login failed");
+    }
+
+    return response.json();
+};
+
 export const createQuiz = (quiz) => api.post("/admin/quiz", quiz);
 export const getQuiz = (linkId) => api.get(`/quiz/${linkId}`);
 export const submitAnswers = (linkId, submission) => api.post(`/quiz/${linkId}/submit`, submission);

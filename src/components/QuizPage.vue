@@ -1,97 +1,3 @@
-<script setup>
-import { ref, onMounted, computed } from 'vue';
-import { useRoute, useRouter } from 'vue-router';
-import axios from 'axios';
-import { ElMessage } from 'element-plus';
-
-const route = useRoute();
-const router = useRouter();
-const token = computed(() => route.params.token || "");
-
-const quizData = ref(null);
-const responses = ref({});
-const participantName = ref('');
-const isNameEntered = ref(false);
-const currentQuestionIndex = ref(0);
-
-onMounted(async () => {
-  if (!token.value) {
-    ElMessage.error("Ошибка: отсутствует токен!");
-    router.push('/');
-    return;
-  }
-
-  try {
-    const response = await axios.get(`http://localhost:8080/api/quiz/${token.value}`);
-    // console.log("Полученные данные:", response.data); // ✅ Проверка API ответа
-    quizData.value = response.data;
-  } catch {
-    ElMessage.error("Ошибка загрузки квиза");
-  }
-});
-
-const handleStart = () => {
-  if (!participantName.value.trim()) {
-    ElMessage.warning("Введите ваше имя!");
-    return;
-  }
-  isNameEntered.value = true;
-};
-
-const handleNext = () => {
-  if (!responses.value[quizData.value.questions[currentQuestionIndex.value].id]) {
-    ElMessage.warning("Выберите ответ перед переходом!");
-    return;
-  }
-  if (currentQuestionIndex.value < quizData.value.questions.length - 1) {
-    currentQuestionIndex.value++;
-  }
-};
-
-const handlePrev = () => {
-  if (currentQuestionIndex.value > 0) {
-    currentQuestionIndex.value--;
-  }
-};
-
-const handleSubmit = async () => {
-  if (!responses.value[quizData.value.questions[currentQuestionIndex.value].id]) {
-    ElMessage.warning("Выберите ответ перед отправкой!");
-    return;
-  }
-
-  const formattedResponses = Object.entries(responses.value).map(([questionId, answerId]) => ({
-    answer: { id: answerId },
-    question: { id: parseInt(questionId) }
-  }));
-
-  try {
-    const response = await axios.post(`http://localhost:8080/api/quiz/${token.value}/submit`, {
-      participantName: participantName.value,
-      responses: formattedResponses
-    });
-
-    // console.log("✅ Успешный ответ API:", response);
-
-    // ✅ Проверка, что в response есть нужные данные
-    if (response.status === 200 && response.data && response.data.participantName && response.data.score !== undefined) {
-      router.push({
-        name: 'success',
-        query: { name: response.data.participantName, score: response.data.score }
-      });
-    } else {
-      throw new Error("Некорректный ответ сервера");
-    }
-
-  } catch (error) {
-    console.error("❌ Ошибка при отправке:", error);
-    ElMessage.error("Ошибка отправки ответов");
-  }
-};
-
-
-</script>
-
 <template>
   <div class="container">
     <div v-if="!isNameEntered" class="name-input">
@@ -104,26 +10,65 @@ const handleSubmit = async () => {
       <h2 v-if="quizData">{{ quizData.link.quiz.title }}</h2>
       <p v-else>Загрузка...</p>
 
-      <!-- ✅ Добавили проверку quizData и вопросов -->
       <div v-if="quizData && quizData.questions && quizData.questions.length > 0" class="quiz-container">
         <div class="question">
-          <!-- ✅ Проверяем, что текущий вопрос существует -->
-          <p class="question-text" v-if="quizData.questions[currentQuestionIndex]">
-            {{ quizData.questions[currentQuestionIndex].questionText }}
-          </p>
-          <p v-else>Ошибка: Вопрос не найден</p>
+          <!-- ✅ Отображение изображения для IMAGE_UPLOAD -->
+          <img v-if="currentQuestion.imageBase64"
+               :src="'data:image/png;base64,' + currentQuestion.imageBase64"
+               alt="Вопрос изображение"
+               class="question-image"/>
 
-          <div v-if="quizData.questions[currentQuestionIndex]">
-            <div v-for="answer in quizData.questions[currentQuestionIndex].answers" :key="answer.id" class="answer">
-              <input
-                  type="radio"
-                  :value="answer.id"
-                  v-model="responses[quizData.questions[currentQuestionIndex].id]"
-                  class="radio"
-              />
-              <label>{{ answer.text }}</label>
+          <!-- ✅ Текст вопроса -->
+          <p class="question-text">
+            {{ currentQuestion.questionText }}
+          </p>
+
+          <!-- ✅ Гарантированное отображение вариантов ответов -->
+          <div v-if="currentQuestion.answers && currentQuestion.answers.length > 0">
+            <!-- SINGLE_CHOICE -->
+            <div v-if="currentQuestion.questionType === 'SINGLE_CHOICE'">
+              <div v-for="answer in currentQuestion.answers" :key="answer.id" class="answer">
+                <input
+                    type="radio"
+                    :value="answer.id"
+                    v-model="responses[currentQuestion.id]"
+                    class="radio"
+                />
+                <label>{{ answer.text }}</label>
+              </div>
+            </div>
+
+            <!-- MULTI_CHOICE -->
+            <div v-else-if="currentQuestion.questionType === 'MULTI_CHOICE'">
+              <div v-for="answer in currentQuestion.answers" :key="answer.id" class="answer">
+                <input
+                    type="checkbox"
+                    :value="answer.id"
+                    :checked="responses[currentQuestion.id]?.includes(answer.id)"
+                    @change="toggleMultiChoice(currentQuestion.id, answer.id)"
+                    class="checkbox"
+                />
+                <label>{{ answer.text }}</label>
+              </div>
+            </div>
+
+            <!-- IMAGE_UPLOAD: Добавлено отображение ответов -->
+            <div v-else-if="currentQuestion.questionType === 'IMAGE_UPLOAD'">
+              <div v-for="answer in currentQuestion.answers" :key="answer.id" class="answer">
+                <input
+                    type="radio"
+                    :value="answer.id"
+                    v-model="responses[currentQuestion.id]"
+                    class="radio"
+                />
+                <label>{{ answer.text }}</label>
+              </div>
             </div>
           </div>
+
+          <!-- 🔥 Сообщение, если нет ответов -->
+          <p v-else class="warning">Ответов нет для этого вопроса!</p>
+
         </div>
 
         <div class="buttons">
@@ -142,7 +87,116 @@ const handleSubmit = async () => {
   </div>
 </template>
 
+<script setup>
+import { ref, onMounted, computed } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
+import axios from 'axios';
+import { ElMessage } from 'element-plus';
 
+const route = useRoute();
+const router = useRouter();
+const token = computed(() => route.params.token || "");
+
+const quizData = ref(null);
+const responses = ref({});
+const participantName = ref('');
+const isNameEntered = ref(false);
+const currentQuestionIndex = ref(0);
+
+const currentQuestion = computed(() => {
+  return quizData.value?.questions?.[currentQuestionIndex.value] || {};
+});
+
+onMounted(async () => {
+  if (!token.value) {
+    ElMessage.error("Ошибка: отсутствует токен!");
+    router.push('/');
+    return;
+  }
+
+  try {
+    const response = await axios.get(`http://localhost:8080/api/quiz/${token.value}`);
+    quizData.value = response.data;
+    console.log("🖼️ Base64 Length:", currentQuestion.value.imageBase64?.length || "нет изображения");
+    console.log("📝 Ответы:", currentQuestion.value.answers);
+  } catch {
+    ElMessage.error("Ошибка загрузки квиза");
+  }
+});
+
+const handleStart = () => {
+  if (!participantName.value.trim()) {
+    ElMessage.warning("Введите ваше имя!");
+    return;
+  }
+  isNameEntered.value = true;
+};
+
+const handleNext = () => {
+  if (!responses.value[currentQuestion.value.id]) {
+    ElMessage.warning("Выберите ответ перед переходом!");
+    return;
+  }
+  if (currentQuestionIndex.value < quizData.value.questions.length - 1) {
+    currentQuestionIndex.value++;
+  }
+};
+
+const handlePrev = () => {
+  if (currentQuestionIndex.value > 0) {
+    currentQuestionIndex.value--;
+  }
+};
+
+// ✅ Исправлена логика MULTI_CHOICE
+const toggleMultiChoice = (questionId, answerId) => {
+  if (!responses.value[questionId]) {
+    responses.value[questionId] = [];
+  }
+
+  const index = responses.value[questionId].indexOf(answerId);
+  if (index === -1) {
+    responses.value[questionId].push(answerId);
+  } else {
+    responses.value[questionId].splice(index, 1);
+  }
+};
+
+const handleSubmit = async () => {
+  if (!responses.value[currentQuestion.value.id]) {
+    ElMessage.warning("Выберите ответ перед отправкой!");
+    return;
+  }
+
+  // Формируем ответы в нужном формате
+  const formattedResponses = Object.entries(responses.value).map(([questionId, selectedAnswers]) => ({
+    question: { id: parseInt(questionId) },
+    answers: Array.isArray(selectedAnswers)
+        ? selectedAnswers.map(answerId => ({ id: answerId }))
+        : [{ id: selectedAnswers }]
+  }));
+
+  try {
+    const response = await axios.post(`http://localhost:8080/api/quiz/${token.value}/submit`, {
+      participantName: participantName.value,
+      responses: formattedResponses
+    });
+
+    if (response.status === 200 && response.data && response.data.participantName && response.data.score !== undefined) {
+      router.push({
+        name: 'success',
+        query: { name: response.data.participantName, score: response.data.score }
+      });
+    } else {
+      throw new Error("Некорректный ответ сервера");
+    }
+
+  } catch (error) {
+    console.error("❌ Ошибка при отправке:", error);
+    ElMessage.error("Ошибка отправки ответов");
+  }
+};
+</script>
 <style scoped>
 .container {
   max-width: 600px;
@@ -178,6 +232,12 @@ const handleSubmit = async () => {
   margin-bottom: 20px;
 }
 
+.question-image {
+  max-width: 100%;
+  border-radius: 5px;
+  margin-bottom: 10px;
+}
+
 .question-text {
   font-weight: bold;
 }
@@ -188,7 +248,7 @@ const handleSubmit = async () => {
   margin: 5px 0;
 }
 
-.radio {
+.radio, .checkbox {
   margin-right: 10px;
 }
 
@@ -198,45 +258,25 @@ const handleSubmit = async () => {
   margin-top: 20px;
 }
 
-.btn-primary {
-  background-color: #409eff;
-  color: white;
+.btn-primary, .btn-secondary, .btn-submit {
   padding: 10px 15px;
   border: none;
   border-radius: 5px;
   cursor: pointer;
-  transition: 0.3s;
 }
 
-.btn-primary:hover {
-  background-color: #337ecc;
+.btn-primary {
+  background-color: #409eff;
+  color: white;
 }
 
 .btn-secondary {
   background-color: #f56c6c;
   color: white;
-  padding: 10px 15px;
-  border: none;
-  border-radius: 5px;
-  cursor: pointer;
-  transition: 0.3s;
-}
-
-.btn-secondary:hover {
-  background-color: #d9534f;
 }
 
 .btn-submit {
   background-color: #67c23a;
   color: white;
-  padding: 10px 15px;
-  border: none;
-  border-radius: 5px;
-  cursor: pointer;
-  transition: 0.3s;
-}
-
-.btn-submit:hover {
-  background-color: #5aaf2b;
 }
 </style>

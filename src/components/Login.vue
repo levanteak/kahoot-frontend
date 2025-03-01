@@ -2,7 +2,7 @@
 import { ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { login } from '@/services/api';
-import background from '@/assets/backround.jpg'; // Импорт изображения
+import background from '@/assets/backround.jpg'; // Убедитесь, что путь к файлу правильный
 
 const router = useRouter();
 const username = ref('');
@@ -11,8 +11,14 @@ const errorMessage = ref('');
 
 const handleSubmit = async () => {
   try {
-    await login(username.value, password.value);
-    router.push('/admin-dashboard');
+    const response = await login(username.value, password.value);
+
+    if (response && response.token) {
+      localStorage.setItem('token', response.token); // Сохраняем токен
+      router.push('/admin-dashboard'); // Перенаправляем после успешного входа
+    } else {
+      throw new Error('Invalid credentials');
+    }
   } catch (error) {
     errorMessage.value = "Invalid login credentials";
   }
